@@ -1,0 +1,23 @@
+name: Build Playdate PDX
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Playdate SDK
+        run: |
+          curl -L -o pdsdk.tar.gz "https://download.panic.com/playdate_sdk/Linux/PlaydateSDK-latest.tar.gz"
+          mkdir -p "$HOME/pdsdk"
+          tar -xzf pdsdk.tar.gz -C "$HOME/pdsdk" --strip-components=1
+      - name: Compile .pdx
+        run: |
+          "$HOME/pdsdk/bin/pdc" Source "CrankCity.pdx"
+          zip -r "CrankCity.pdx.zip" "CrankCity.pdx"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CrankCity-pdx
+          path: CrankCity.pdx.zip
