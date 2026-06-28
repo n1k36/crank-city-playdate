@@ -38,7 +38,7 @@ local DT <const> = 1 / 30
 local msg, msgT = "", 0
 
 -- shared world (top-down)
-local px, py, pheading, veh, cv, chd
+local px, py, pheading, veh, cv, chd, cvx, cvy
 local dest, packages, got, needN, cops, catchT, traffic, heat, heatT
 -- sonar
 local depth, oxygen, hull, beamAng, haz, sNeed, sGot, nextSpawn
@@ -62,7 +62,7 @@ end
 local function beginPlay()
   local t = m.type
   px, py, pheading = 0, 0, 0
-  veh = (t == "drive" or t == "chase"); cv = 0; chd = 0
+  veh = (t == "drive" or t == "chase"); cv = 0; chd = 0; cvx = 0; cvy = 0
   packages, got, cops, catchT = {}, 0, {}, 0
   traffic = {}; heat = 1; heatT = 0
   if veh then for k = 1, 7 do
@@ -119,11 +119,21 @@ end
 
 local function drawCity()
   local ccx, ccy = math.floor(px / CELL), math.floor(py / CELL)
-  gfx.setColor(gfx.kColorWhite)
   for gx = ccx - 4, ccx + 4 do for gy = ccy - 3, ccy + 3 do
+    local bx, by = w2s(gx * CELL, gy * CELL)
     if (gx % 3 ~= 0) and (gy % 3 ~= 0) then
-      local bx, by = w2s(gx * CELL + 4, gy * CELL + 4)
-      gfx.setLineWidth(1); gfx.drawRect(bx, by, CELL - 8, CELL - 8)
+      -- building block: textured fill, dark outline, window grid
+      gfx.setPattern({ 0xFF, 0xBB, 0xFF, 0xEE, 0xFF, 0xBB, 0xFF, 0xEE })
+      gfx.fillRect(bx + 3, by + 3, CELL - 6, CELL - 6)
+      gfx.setColor(gfx.kColorBlack); gfx.setLineWidth(2)
+      gfx.drawRect(bx + 3, by + 3, CELL - 6, CELL - 6)
+      for wx = 0, 1 do for wy = 0, 1 do gfx.fillRect(bx + 13 + wx * 24, by + 13 + wy * 24, 9, 9) end end
+      gfx.setColor(gfx.kColorWhite)
+    else
+      -- road: faint dashed lane lines down the middle
+      gfx.setColor(gfx.kColorWhite)
+      if gx % 3 == 0 then for d = 0, CELL - 1, 12 do gfx.fillRect(bx + CELL / 2, by + d, 2, 6) end end
+      if gy % 3 == 0 then for d = 0, CELL - 1, 12 do gfx.fillRect(bx + d, by + CELL / 2, 6, 2) end end
     end
   end end
 end
@@ -155,37 +165,44 @@ end
 
 -- ---------- mode updates (return 'run'/'done'/'fail') ----------
 local function updWorld()
+  -- direction from the d-pad (the car/character simply goes where you press)
+  local ax, ay = 0, 0
+  if playdate.buttonIsPressed(playdate.kButtonLeft) then ax = -1 end
+  if playdate.buttonIsPressed(playdate.kButtonRight) then ax = 1 end
+  if playdate.buttonIsPressed(playdate.kButtonUp) then ay = -1 end
+  if playdate.buttonIsPressed(playdate.kButtonDown) then ay = 1 end
+  if ax ~= 0 and ay ~= 0 then ax = ax * 0.7071; ay = ay * 0.7071 end
+
   if veh then
-    local thr = 0
-    if playdate.buttonIsPressed(playdate.kButtonUp) then thr = 1 end
-    if playdate.buttonIsPressed(playdate.kButtonDown) then thr = -0.6 end
-    local ck = playdate.isCrankDocked() and 0 or (playdate.getCrankChange() * 0.05)
-    if ck > 0 then thr = math.max(thr, math.min(1, ck)) end
-    if playdate.buttonIsPressed(playdate.kButtonLeft) then chd = chd - 2.6 * DT end
-    if playdate.buttonIsPressed(playdate.kButtonRight) then chd = chd + 2.6 * DT end
-    cv = (cv + thr * 360 * DT) * 0.96; cv = math.max(-120, math.min(240 + upg.engine * 30, cv))
-    local nx = px + math.cos(chd) * cv * DT
-    local ny = py + math.sin(chd) * cv * DT
-    if buildingAt(nx, py) then nx = px; cv = cv * 0.25 end
-    if buildingAt(px, ny) then ny = py; cv = cv * 0.25 end
+    -- momentum car: accelerate toward input, drift, clamp top speed
+    local accel = 900
+    local ck = playdate.isCrankDocked() and 0 or math.min(0.5, math.abs(playdate.getCrankChange()) * 0.012)
+    accel = accel * (1 + ck)                 -- crank gives a little boost
+    local maxsp = 165 + upg.engine * 22
+    cvx = (cvx + ax * accel * DT) * 0.90
+    cvy = (cvy + ay * accel * DT) * 0.90
+    local sp = math.sqrt(cvx * cvx + cvy * cvy)
+    if sp > maxsp then cvx = cvx / sp * maxsp; cvy = cvy / sp * maxsp end
+    local nx = px + cvx * DT
+    local ny = py + cvy * DT
+    if buildingAt(nx, py) then nx = px; cvx = cvx * 0.2 end
+    if buildingAt(px, ny) then ny = py; cvy = cvy * 0.2 end
     px, py = nx, ny
+    if sp > 8 then chd = math.atan(cvy, cvx) end
   else
-    local mx, my = 0, 0
-    if playdate.buttonIsPressed(playdate.kButtonLeft) then mx = -1 end
-    if playdate.buttonIsPressed(playdate.kButtonRight) then mx = 1 end
-    if playdate.buttonIsPressed(playdate.kButtonUp) then my = -1 end
-    if playdate.buttonIsPressed(playdate.kButtonDown) then my = 1 end
-    local nx = px + mx * 100 * DT
-    local ny = py + my * 100 * DT
+    local sp = 105
+    local nx = px + ax * sp * DT
+    local ny = py + ay * sp * DT
     if not buildingAt(nx, py) then px = nx end
     if not buildingAt(px, ny) then py = ny end
+    if ax ~= 0 or ay ~= 0 then pheading = math.atan(ay, ax) end
   end
 
   -- civilian traffic (drive/chase)
   for _, car in ipairs(traffic) do
     car.x = car.x + car.vx * DT; car.y = car.y + car.vy * DT
     if (car.x - px) ^ 2 + (car.y - py) ^ 2 > 520 * 520 then local x, y = roadPoint(); car.x = px + (x % 400) - 200; car.y = py + (y % 400) - 200 end
-    if veh and (car.x - px) ^ 2 + (car.y - py) ^ 2 < 20 ^ 2 then cv = cv * 0.2; flash("WATCH IT!") end
+    if veh and (car.x - px) ^ 2 + (car.y - py) ^ 2 < 20 ^ 2 then cvx = cvx * 0.3; cvy = cvy * 0.3; flash("WATCH IT!") end
   end
 
   local t = m.type
@@ -353,11 +370,13 @@ function playdate.update()
   if state == "title" then
     gfx.clear(gfx.kColorBlack); gfx.setColor(gfx.kColorWhite)
     for i = 1, 40 do gfx.fillRect((i * 83) % SW, (i * 51) % SH, 1, 1) end
-    cc("CRANK CITY", 40, 1)
-    cc("a Meridian crime story", 66)
-    cc(progress > 0 and ("Continue - Mission " .. math.min(progress + 1, #MISSIONS)) or "New game", 120)
-    cc("Ledger fragments: " .. ledger .. "/3", 142)
-    cc("A = start    B = restart story", 184)
+    cc("CRANK CITY", 32, 1)
+    cc("a Meridian crime story", 56)
+    cc("D-PAD = move / drive", 92)
+    cc("CRANK = safes & sonar    A = action", 110)
+    cc("Reach the marker. Don't get caught.", 128)
+    cc(progress > 0 and ("Continue - Mission " .. math.min(progress + 1, #MISSIONS)) or "New game", 158)
+    cc("A = start    B = restart story", 188)
     if playdate.buttonJustPressed(playdate.kButtonA) then startMission(math.min(progress + 1, #MISSIONS)) end
     if playdate.buttonJustPressed(playdate.kButtonB) then progress = 0; ledger = 0; persist(); startMission(1) end
     return
@@ -415,9 +434,22 @@ function playdate.update()
   if t == "sonar" then st = updSonar(); drawSonar()
   elseif t == "safe" then st = updSafe(); drawSafe()
   else st = updWorld(); drawWorldMode() end
-  -- objective banner
-  gfx.setImageDrawMode(gfx.kDrawModeFillWhite); gfx.drawText(m.title, SW - gfx.getTextSize(m.title) - 6, SH - 20); gfx.setImageDrawMode(gfx.kDrawModeCopy)
+  -- always-visible objective banner (top center)
+  local obj = objectiveText()
+  local ow = gfx.getTextSize(obj)
+  gfx.setColor(gfx.kColorBlack); gfx.fillRect(CXs - ow / 2 - 6, 0, ow + 12, 18)
+  gfx.setImageDrawMode(gfx.kDrawModeFillWhite); gfx.drawText(obj, CXs - ow / 2, 3); gfx.setImageDrawMode(gfx.kDrawModeCopy)
   if st == "done" then finishMission() elseif st == "fail" then state = "fail" end
+end
+
+function objectiveText()
+  local t = m.type
+  if t == "drive" then return "GO TO THE  !  MARKER"
+  elseif t == "chase" then return "ESCAPE TO  H  -  LOSE THE COPS"
+  elseif t == "foot" or t == "port" then return "GRAB CRATES  " .. got .. "/" .. needN .. "  (follow #)"
+  elseif t == "sonar" then return "DIVE - GRAB CRATES  " .. sGot .. "/" .. sNeed
+  elseif t == "safe" then return "CRANK TO EACH NUMBER, PRESS A" end
+  return ""
 end
 
 function cc(s, y, big)
