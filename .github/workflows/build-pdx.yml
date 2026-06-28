@@ -13,6 +13,7 @@ jobs:
           curl -L -o pdsdk.tar.gz "https://download.panic.com/playdate_sdk/Linux/PlaydateSDK-latest.tar.gz"
           mkdir -p "$HOME/pdsdk"
           tar -xzf pdsdk.tar.gz -C "$HOME/pdsdk" --strip-components=1
+          echo "PLAYDATE_SDK_PATH=$HOME/pdsdk" >> "$GITHUB_ENV"
       - name: Compile .pdx
         run: |
           "$HOME/pdsdk/bin/pdc" Source "CrankCity.pdx"
